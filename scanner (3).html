@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220"><title>Phone Document Scanner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+ body{background:#0b1220;color:#e5e7eb} input,select{color-scheme:dark} .field{width:100%;background:#070d17;border:1px solid #334155;border-radius:12px;padding:12px;font-size:14px} .btn{border-radius:12px;padding:12px 14px;font-weight:700} .photo{aspect-ratio:3/4;object-fit:contain;background:#05080e;width:100%} .muted{color:#94a3b8}
+</style>
+</head>
+<body class="min-h-screen antialiased">
+<header class="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 backdrop-blur">
+ <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3"><div><div class="font-bold text-lg"><i class="fa-solid fa-camera text-amber-400 mr-2"></i>Phone Document Scanner</div><div class="text-xs muted">Upload an existing PDF or capture 2–3 pages, then attach it by enquiry/case number</div></div><a href="index.html" class="text-sm bg-slate-800 px-3 py-2 rounded-lg">Records</a></div>
+</header>
+<main class="max-w-3xl mx-auto p-4 pb-12 space-y-5">
+ <section class="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3">
+  <h2 class="font-bold text-amber-400">1. Connect to your records</h2>
+  <label class="block text-sm">JSONBin Bin ID<input id="binId" class="field mt-1" autocomplete="off" placeholder="Your JSONBin bin ID"></label>
+  <label class="block text-sm">JSONBin Master Key<input id="masterKey" class="field mt-1" type="password" autocomplete="off" placeholder="Your JSONBin master key"></label>
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+   <label class="block text-sm">Cloudinary cloud name<input id="cloudName" class="field mt-1" value="xb1vr0t7" autocomplete="off"></label>
+   <label class="block text-sm">Unsigned upload preset<input id="preset" class="field mt-1" autocomplete="off" placeholder="Create/use an unsigned preset"></label>
+  </div>
+  <button id="connectBtn" class="btn w-full bg-amber-400 text-slate-950" onclick="connectRecords()"><i class="fa-solid fa-plug mr-2"></i>Connect & load enquiries</button>
+  <p class="text-xs muted">Credentials are used in this browser session only and are not saved by this page. A static site cannot keep API keys secret.</p>
+ </section>
+ <section class="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3">
+  <h2 class="font-bold text-amber-400">2. Choose enquiry</h2>
+  <label class="block text-sm">Search by enquiry / diary / FIR / case number
+   <input id="recordSearch" class="field mt-1" type="search" placeholder="Type enquiry, diary, FIR/WP, or case title" disabled>
+  </label>
+  <label class="block text-sm">Matching enquiry / case record<select id="recordSelect" class="field mt-1" disabled><option value="">Connect first</option></select></label>
+  <p id="recordHint" class="text-xs muted">Search for the enquiry/case number, select the correct record, then upload its PDF. The existing PDF link will be replaced.</p>
+ </section>
+ <section class="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-3">
+  <h2 class="font-bold text-amber-400">3. Upload an existing PDF</h2>
+  <p class="text-sm muted">Choose a PDF from your phone and attach it to the selected enquiry/case number. This does not require the photo-to-PDF library.</p>
+  <label class="block text-sm">PDF document
+   <input id="pdfFile" class="field mt-1" type="file" accept="application/pdf,.pdf" disabled>
+  </label>
+  <p id="pdfFileHint" class="text-xs muted">No PDF selected.</p>
+  <button id="uploadPdfBtn" class="btn w-full bg-emerald-600 disabled:opacity-40" onclick="uploadExistingPdf()" disabled><i class="fa-solid fa-file-arrow-up mr-2"></i>Upload PDF to selected case</button>
+ </section>
+ <section class="rounded-2xl border border-slate-800 bg-slate-900 p-4 space-y-4">
+  <div class="flex items-start justify-between gap-3"><div><h2 class="font-bold text-amber-400">4. Or take document photos</h2><p class="text-sm muted mt-1">At least 2 photos are required; up to 3 photos per enquiry. Each photo is automatically resized and compressed to no more than 400 KB before being added to the PDF. Hold the phone above each page and keep all page corners visible.</p></div><span id="photoCount" class="text-xs rounded-full bg-slate-800 px-3 py-1 whitespace-nowrap">0 / 3</span></div>
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="photoSlots"></div>
+  <div class="flex gap-3"><button class="btn flex-1 bg-slate-800" onclick="clearPhotos()"><i class="fa-solid fa-rotate-left mr-2"></i>Clear photos</button><button id="uploadBtn" class="btn flex-1 bg-emerald-600 disabled:opacity-40" onclick="makeAndUpload()" disabled><i class="fa-solid fa-file-pdf mr-2"></i>Create PDF & attach</button></div>
+  <p class="text-xs muted">The browser asks for camera access when you tap a photo slot. On many phones this works best when the site is hosted over HTTPS.</p>
+ </section>
+ <section id="statusBox" class="hidden rounded-2xl border border-slate-700 bg-slate-900 p-4 text-sm" role="status" aria-live="polite"></section>
+</main>
+<script>
+let records=[]; let photos=[null,null,null]; let config=null; let rootRecord=null;
+const $=id=>document.getElementById(id);
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function showStatus(msg,kind='info'){const el=$('statusBox');el.classList.remove('hidden');el.className='rounded-2xl border p-4 text-sm '+(kind==='error'?'border-rose-700 bg-rose-950/40 text-rose-200':kind==='success'?'border-emerald-700 bg-emerald-950/40 text-emerald-200':'border-sky-700 bg-sky-950/40 text-sky-200');el.textContent=msg;}
+function recordArray(record){if(Array.isArray(record))return {list:record,wrapped:false};if(record&&Array.isArray(record.records))return {list:record.records,wrapped:true};throw new Error('JSONBin data must be an array or an object containing a records array.');}
+async function connectRecords(){
+ const binId=$('binId').value.trim(),masterKey=$('masterKey').value.trim(),cloudName=$('cloudName').value.trim(),preset=$('preset').value.trim();
+ if(!binId||!masterKey||!cloudName||!preset){showStatus('Enter the JSONBin credentials, Cloudinary cloud name, and unsigned upload preset.','error');return;}
+ config={binId,masterKey,cloudName,preset};$('connectBtn').disabled=true;$('connectBtn').textContent='Connecting…';
+ try{await fetchRecords();showStatus(`Connected. Loaded ${records.length} record(s).`,'success');}
+ catch(e){showStatus('Could not load records: '+e.message,'error');}
+ finally{$('connectBtn').disabled=false;$('connectBtn').innerHTML='<i class="fa-solid fa-plug mr-2"></i>Connect & load enquiries';}
+}
+async function fetchRecords(){const res=await fetch(`https://api.jsonbin.io/v3/b/${encodeURIComponent(config.binId)}/latest`,{headers:{'X-Master-Key':config.masterKey}});const data=await res.json();if(!res.ok)throw new Error(data.message||data.error||'Check your JSONBin Bin ID and Master Key.');rootRecord=data.record;const parsed=recordArray(data.record);records=parsed.list;config.wrapped=parsed.wrapped;
+ $('recordSearch').disabled=false;$('recordSearch').value='';$('recordSearch').oninput=renderRecordOptions;renderRecordOptions();$('recordSelect').disabled=false;$('pdfFile').disabled=false;}
+function recordLabel(r,i){const enquiry=r['Enquiry No']||r.diaryNo;const name=r['Name of IO/EO']||r.caseTitle||r.orderDescription;const circle=r['Circle'];return `${enquiry?'Enquiry '+enquiry+' · ':''}${name||'Record '+(i+1)}${circle?' · Circle '+circle:''}${r.id?' · ID '+r.id:''}`;}
+function renderRecordOptions(){const sel=$('recordSelect');const old=sel.value;const q=($('recordSearch').value||'').trim().toLowerCase();sel.innerHTML='<option value="">-- Select an enquiry / case --</option>';records.forEach((r,i)=>{const hay=[r.id,r['Enquiry No'],r['Name of IO/EO'],r['Circle'],r['Sub-Circle'],r['Reference Letter& Date'],r['Recommendation for'],r['Status'],r['Final Approval Date'],r['Final Dispatch'],r.diaryNo,r.firNo,r.caseTitle,r.orderDescription].filter(Boolean).join(' ').toLowerCase();if(q&&!hay.includes(q))return;const opt=document.createElement('option');opt.value=String(r.id??i);opt.textContent=recordLabel(r,i);sel.appendChild(opt);});if([...sel.options].some(o=>o.value===old))sel.value=old;updateSelectedRecord();}
+function findSelected(){const key=$('recordSelect').value;return records.find((r,i)=>String(r.id??i)===key)||null;}
+function updateSelectedRecord(){const r=findSelected();$('recordHint').textContent=r?`Selected case: ${recordLabel(r,records.indexOf(r))}. Existing PDF: ${r.pdfUrl||'none'}. Uploading a PDF replaces the main PDF link.`:'Search and select the correct enquiry/case record.';updatePhotoCount();updatePdfUploadButton();}
+$('recordSelect').addEventListener('change',updateSelectedRecord);
+function updatePdfUploadButton(){const f=$('pdfFile').files?.[0];$('pdfFileHint').textContent=f?`${f.name} · ${(f.size/1024/1024).toFixed(2)} MB`:'No PDF selected.';$('uploadPdfBtn').disabled=!(!!findSelected()&&!!config&&!!f&&(f.type==='application/pdf'||f.name.toLowerCase().endsWith('.pdf')));}
+$('pdfFile').addEventListener('change',updatePdfUploadButton);
+async function uploadExistingPdf(){const selected=findSelected(),file=$('pdfFile').files?.[0];if(!config){showStatus('Connect to JSONBin first.','error');return;}if(!selected){showStatus('Search for and select an enquiry/case number first.','error');return;}if(!file||!(file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf'))){showStatus('Choose a PDF file.','error');return;}if(file.size>50*1024*1024){showStatus('This PDF is larger than 50 MB. Please compress it and try again.','error');return;}
+ const btn=$('uploadPdfBtn');btn.disabled=true;btn.textContent='Uploading PDF…';
+ try{const safeCase=String(selected['Enquiry No']||selected.diaryNo||selected.id||'case').replace(/[^a-zA-Z0-9_-]/g,'_');const form=new FormData();form.append('file',file);form.append('upload_preset',config.preset);form.append('public_id',`case_${safeCase}_${Date.now()}`);const upload=await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(config.cloudName)}/raw/upload`,{method:'POST',body:form});const uploaded=await upload.json();if(!upload.ok)throw new Error(uploaded.error?.message||'Cloudinary upload failed. Check the unsigned preset and raw-file upload settings.');const url=uploaded.secure_url;if(!url)throw new Error('Cloudinary did not return a secure URL.');
+ const idx=records.findIndex((r,i)=>String(r.id??i)===String(selected.id??records.indexOf(selected)));if(idx<0)throw new Error('Selected case record could not be found.');records[idx].pdfUrl=url;records[idx].pdfName=file.name;records[idx].pdfPhotoCount=null;records[idx].pdfUpdatedAt=new Date().toISOString();records[idx].pdfUploadMethod='direct';const payload=config.wrapped?{...rootRecord,records}:records;const put=await fetch(`https://api.jsonbin.io/v3/b/${encodeURIComponent(config.binId)}`,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':config.masterKey},body:JSON.stringify(payload)});const putData=await put.json().catch(()=>({}));if(!put.ok)throw new Error(putData.message||putData.error||'PDF uploaded, but JSONBin could not be updated. PDF URL: '+url);showStatus(`Success! PDF “${file.name}” is attached to ${recordLabel(records[idx],idx)}. The record’s pdfUrl has been updated.`, 'success');const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.className='block underline text-amber-300 break-all mt-2';link.textContent='Open uploaded PDF';$('statusBox').appendChild(link);$('pdfFile').value='';updatePdfUploadButton();await fetchRecords();}
+ catch(e){showStatus('Error: '+e.message,'error');}
+ finally{btn.innerHTML='<i class="fa-solid fa-file-arrow-up mr-2"></i>Upload PDF to selected case';updatePdfUploadButton();}}
+
+function renderSlots(){const host=$('photoSlots');host.innerHTML='';photos.forEach((photo,i)=>{const div=document.createElement('div');div.className='rounded-xl border border-slate-700 p-2 space-y-2';div.innerHTML=`<div class="text-sm font-semibold">Page ${i+1}${i<2?' · required':' · optional'}</div><div id="preview-${i}" class="rounded-lg overflow-hidden bg-slate-950 flex items-center justify-center min-h-28">${photo?`<img class="photo" src="${photo.url}" alt="Page ${i+1} preview">`:'<div class="text-center muted p-5"><i class="fa-regular fa-image text-2xl"></i><div class="text-xs mt-2">No photo yet</div></div>'}</div><label class="btn block text-center bg-slate-800 text-sm cursor-pointer"><i class="fa-solid fa-camera mr-2"></i>${photo?'Retake photo':'Take photo'}<input class="hidden" type="file" accept="image/*" capture="environment" onchange="photoChosen(event,${i})"></label><button class="w-full text-xs text-rose-300 py-1" onclick="removePhoto(${i})" ${photo?'':'disabled'}>Remove</button>`;host.appendChild(div);});updatePhotoCount();}
+function photoChosen(event,i){const file=event.target.files&&event.target.files[0];if(!file)return;if(!file.type.startsWith('image/')){showStatus('Please choose an image file.','error');return;}if(file.size>15*1024*1024){showStatus('That photo is over 15 MB. Please retake it at a lower resolution.','error');return;}const url=URL.createObjectURL(file);if(photos[i]?.url)URL.revokeObjectURL(photos[i].url);photos[i]={file,url};renderSlots();}
+function removePhoto(i){if(photos[i]?.url)URL.revokeObjectURL(photos[i].url);photos[i]=null;renderSlots();}
+function clearPhotos(){photos.forEach(p=>p?.url&&URL.revokeObjectURL(p.url));photos=[null,null,null];renderSlots();}
+function updatePhotoCount(){const n=photos.filter(Boolean).length;$('photoCount').textContent=`${n} / 3`;const ok=n>=2&&!!findSelected()&&!!config;$('uploadBtn').disabled=!ok;}
+$('recordSelect').addEventListener('change',updatePhotoCount);
+async function fileToCompressedJpeg(file){
+ // Compress each processed photo to <= 400 KB before embedding it in the PDF.
+ const sourceUrl=URL.createObjectURL(file);
+ try{
+  const img=new Image();
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not read one of the selected photos.'));img.src=sourceUrl;});
+  const originalW=img.naturalWidth||img.width, originalH=img.naturalHeight||img.height;
+  let scale=Math.min(1,1400/Math.max(originalW,originalH));
+  const maxBytes=400*1024;
+  for(let attempt=0;attempt<18;attempt++){
+   const canvas=document.createElement('canvas');
+   canvas.width=Math.max(1,Math.round(originalW*scale));
+   canvas.height=Math.max(1,Math.round(originalH*scale));
+   const ctx=canvas.getContext('2d',{alpha:false});
+   ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);
+   ctx.drawImage(img,0,0,canvas.width,canvas.height);
+   for(const quality of [0.55,0.45,0.35,0.28,0.22]){
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+    if(blob&&blob.size<=maxBytes){
+     return await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error('Could not prepare compressed photo data.'));reader.readAsDataURL(blob);});
+    }
+   }
+   scale*=0.82;
+  }
+  throw new Error('Could not reduce a photo below 400 KB. Please choose a smaller photo and try again.');
+ } finally {URL.revokeObjectURL(sourceUrl);}
+}
+async function ensureJsPDF(){if(window.jspdf&&window.jspdf.jsPDF)return window.jspdf.jsPDF;const sources=['https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js','https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js','https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js'];for(const src of sources){try{await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=src;script.async=true;script.onload=resolve;script.onerror=()=>reject(new Error('Could not load '+src));document.head.appendChild(script);});if(window.jspdf&&window.jspdf.jsPDF)return window.jspdf.jsPDF;}catch(e){console.warn(e.message);}}throw new Error('The PDF library could not load from any CDN. Check your internet connection, disable content/ad blockers for this site, then reload the page.');}
+async function makePdf(){const jsPDF=await ensureJsPDF();const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});let page=0;for(const p of photos.filter(Boolean)){const data=await fileToCompressedJpeg(p.file);const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=()=>reject(new Error('Could not prepare a compressed photo.'));img.src=data;});if(page>0)pdf.addPage('a4','portrait');const pw=pdf.internal.pageSize.getWidth(),ph=pdf.internal.pageSize.getHeight();const margin=5,scale=Math.min((pw-2*margin)/img.width,(ph-2*margin)/img.height);const iw=img.width*scale,ih=img.height*scale;pdf.addImage(data,'JPEG',(pw-iw)/2,(ph-ih)/2,iw,ih,undefined,'FAST');page++;}return pdf.output('blob');}
+async function makeAndUpload(){const selected=findSelected();const count=photos.filter(Boolean).length;if(!selected){showStatus('Select an enquiry first.','error');return;}if(count<2||count>3){showStatus('Each enquiry requires 2 or 3 photos.','error');return;}if(!config){showStatus('Connect to JSONBin first.','error');return;}
+ const btn=$('uploadBtn');btn.disabled=true;btn.textContent='Preparing PDF…';
+ try{
+  const blob=await makePdf();const pdfFile=new File([blob],`enquiry_${selected['Enquiry No']||selected.id||Date.now()}.pdf`,{type:'application/pdf'});const form=new FormData();form.append('file',pdfFile);form.append('upload_preset',config.preset);form.append('public_id',`enquiry_${String(selected['Enquiry No']||selected.id||Date.now()).replace(/[^a-zA-Z0-9_-]/g,'_')}_${Date.now()}`);
+  btn.textContent='Uploading PDF…';const upload=await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(config.cloudName)}/raw/upload`,{method:'POST',body:form});const uploaded=await upload.json();if(!upload.ok)throw new Error(uploaded.error?.message||'Cloudinary upload failed. Check the unsigned preset and raw-file upload settings.');const url=uploaded.secure_url;if(!url)throw new Error('Cloudinary did not return a secure URL.');
+  btn.textContent='Updating record…';const idx=records.findIndex((r,i)=>String(r.id??i)===String(selected.id??records.indexOf(selected)));if(idx<0)throw new Error('Selected record could not be found in the loaded data.');records[idx].pdfUrl=url;records[idx].pdfName=`enquiry_${selected['Enquiry No']||selected.id||'document'}.pdf`;records[idx].pdfPhotoCount=count;records[idx].pdfUpdatedAt=new Date().toISOString();
+  const payload=config.wrapped?{...rootRecord,records}:records;const put=await fetch(`https://api.jsonbin.io/v3/b/${encodeURIComponent(config.binId)}`,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':config.masterKey},body:JSON.stringify(payload)});const putData=await put.json().catch(()=>({}));if(!put.ok)throw new Error(putData.message||putData.error||'PDF uploaded, but JSONBin could not be updated. Copy the PDF URL and update the record manually. URL: '+url);
+  showStatus(`Success! ${count} photos were combined into a PDF and attached to the selected enquiry. The record's pdfUrl has been updated.`, 'success');const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener';link.className='block underline text-amber-300 break-all mt-2';link.textContent='Open uploaded PDF';$('statusBox').appendChild(link);clearPhotos();await fetchRecords();
+ }catch(e){showStatus('Error: '+e.message,'error');}
+ finally{btn.innerHTML='<i class="fa-solid fa-file-pdf mr-2"></i>Create PDF & attach';updatePhotoCount();}
+}
+renderSlots();
+</script>
+</body></html>
